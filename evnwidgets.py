@@ -19,6 +19,10 @@ from ENML2HTML import MediaStore
 import EvernoteWebUtil as ewu
 from settings import authToken
 
+import pandas as pd
+from pandas import DataFrame
+import qgrid
+
 # code for loading notes for a given notebook
 # I already have code in my branch of osf.io
 # https://github.com/rdhyee/osf.io/blob/ee33dab8a518da1db831d3f2dc531f44766867cb/website/addons/evernote/views.py#L100
@@ -43,28 +47,31 @@ class OSFMediaStore(MediaStore):
         data64 = u''.join(base64.encodestring(data).splitlines())
         return u'data:{};base64,{}'.format(mime_type, data64)
 
-
 class NotesViewerWidget(object):
     def __init__(self, ewu):
         self.ewu = ewu
         self.notebook_widget = widgets.Dropdown(
             description='Notebook:'
         )
-        self.notes_widget = widgets.Select(
-            description='Notes:',
-            options = [],
-            width = '500px'
-        )
+
+        # set up empty notes_widget
+        self.df = DataFrame()
+        self.notes_widget = qgrid.QGridWidget(df=self.df)
+
         self.note_widget = widgets.HTML("<b>note widget</b>",
                         background_color='#F5F5DC', # and also by color code.
                         border_color='red' 
         )
-        self.t_widget = widgets.Text()
+
+        self.status_widget = widgets.Text()
+
+        # create note editing-related widgets and set visiblity to False for now
+        # to fill out
         
-    
-        # bind changes in w to display of t
+        # bind changes in w to display of status
         self.notebook_widget.on_trait_change(self.notebook_changed, 'value')
-        self.notes_widget.on_trait_change(self.note_selected, 'value')
+        self.notes_widget.on_msg(self.notes_selected)
+        #self.notes_widget.on_trait_change(self.note_selected, 'value')
         
         self.load_notebooks()
         
@@ -72,7 +79,12 @@ class NotesViewerWidget(object):
         return dict([(v,k) for (k,v) in d.items()])
 
     def notes_md_for_notebook(self, notebook_guid):
-        return self.ewu.notes_metadata(notebookGuid=notebook_guid, includeTitle=True,) 
+        return self.ewu.notes_metadata(notebookGuid=notebook_guid, 
+          includeTitle=True,
+          includeUpdated=True,
+          includeCreated=True,
+          includeUpdateSequenceNum=True,
+          includeTagGuids=True,) 
 
     def load_notebooks(self):
 
@@ -85,22 +97,57 @@ class NotesViewerWidget(object):
         default_nb_guid = [notebook.guid for notebook in self.notebooks if notebook.defaultNotebook is True][0]
         self.notebook_widget.value = default_nb_guid
 
+    def notes_to_df(self, notes):
+
+        def j_(items):
+            return ",".join(items)
+
+        notes_data = []
+
+        for note in notes:
+            tags = [ewu.tag(guid=tagGuid).name for tagGuid in note.tagGuids] if note.tagGuids is not None else []
+            plus_tags = [tag for tag in tags if tag.startswith("+")]
+            context_tags = [tag for tag in tags if tag.startswith("@")]
+            when_tags = [tag for tag in tags if tag.startswith("#")]
+            other_tags = [tag for tag in tags if tag[0] not in ['+', '@', '#']]
+
+
+            notes_data.append(dict([('title',note.title), 
+                                    ('guid',note.guid), 
+                                    ('created', datetime.datetime.fromtimestamp(note.created/1000.)),
+                                    ('updated', datetime.datetime.fromtimestamp(note.updated/1000.)),
+                                    ('plus', j_(plus_tags)),
+                                    ('context', j_(context_tags)),  
+                                    ('when', j_(when_tags)), 
+                                    ('other', j_(other_tags))
+                                    ])
+            )
+
+        notes_df = DataFrame(notes_data,
+                      columns=['title','guid','created','updated','plus', 'context', 'when', 'other'])  
+
+        return notes_df
+
     def notebook_changed(self, name, value):
         d = self.inv_dict(self.notebook_widget.options)
 
-        self.t_widget.value = unicode(d.get(value,'') + " ({})".format(self.nbcounts.get(value)) )
+        self.status_widget.value = unicode(d.get(value,'') + " ({})".format(self.nbcounts.get(value)) )
 
         # load notes for notebook
-        _options = ([(note_md.title.decode('UTF-8'), note_md.guid) 
-                                            for note_md in islice(self.notes_md_for_notebook(value),200)])
-        self.notes_widget.options = _options
+
+        notes = islice(self.notes_md_for_notebook(value),200)
+        self.df = self.notes_to_df(notes)
+
+        # keep widget but change df
+        self.notes_widget.df = self.df
+        self.notes_widget._df_changed()
         
-    def note_selected(self, name, value):
+    def note_selected(self, guid):
         # grab the note
         self.note_widget.value = "<i>Retrieving note...</i>"
         try:
-            note = self.ewu.get_note(value, withContent=True, withResourcesData=True)
-            mediaStore = OSFMediaStore(self.ewu.noteStore, value)
+            note = self.ewu.get_note(guid, withContent=True, withResourcesData=True)
+            mediaStore = OSFMediaStore(self.ewu.noteStore, guid)
             _html =  ENML2HTML.ENMLToHTML(note.content, media_store=mediaStore).decode('UTF-8')
             self.note_widget.value = _html
         except Exception as e:
@@ -108,14 +155,36 @@ class NotesViewerWidget(object):
             # self.note_widget.value = u"{} | {}: {}".format(value, e.errorCode, e.parameter)
             self.note_widget.value = unicode(e)
 
+    def notes_selected(self, widget, changes, *args, **kwargs):
+        # print (widget, changes, args, kwargs)
+
+        if changes.get('type') == 'selection_change':
+
+            #print ('selection_change', changes.get('rows'), self.notes_widget.get_selected_rows())
+            #print (unicode(changes.get('indexes')))
+
+            sel_indexes  = changes.get('indexes')
+            if len(sel_indexes) == 1: 
+                # render that note
+                guid = self.df.loc[sel_indexes[0], 'guid']
+                self.note_widget.value = "single guid: {}".format(guid)
+                # render the note
+                self.note_selected(guid)
+
+            else:
+                self.note_widget.value = "multiple guids: {}".format(unicode(self.df.loc[sel_indexes, 'guid']))
+
+        elif changes.get('type') == 'cell_change':
+            print ('cell_change', changes)
+
     def _ipython_display_(self):
-        display(self.notebook_widget, 
-                self.t_widget, 
+        display(VBox([self.notebook_widget, 
+                self.status_widget, 
                 self.notes_widget, 
-                self.note_widget)
+                self.note_widget]))
 
     def __del__(self):
-        for w in [self.notebook_w, self.notes_widget, self.note_widget, self.t_widget]:
+        for w in [self.notebook_w, self.notes_widget, self.note_widget, self.status_widget]:
             w.close()
 
 
