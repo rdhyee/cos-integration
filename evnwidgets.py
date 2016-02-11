@@ -7,8 +7,8 @@ import lxml
 
 from IPython.display import display, HTML
 from ipywidgets import widgets
-from ipywidgets import VBox, HBox
-import traitlets
+from ipywidgets import (VBox, HBox, FlexBox)
+from traitlets import Any
 
 from sublime_evernote.lib import (markdown2, html2text, pygments)
 
@@ -54,6 +54,8 @@ class NotesViewerWidget(object):
             description='Notebook:'
         )
 
+        # TO DO: mode widget: viewing vs editing  
+
         # set up empty notes_widget
         self.df = DataFrame()
         self.notes_widget = qgrid.QGridWidget(df=self.df)
@@ -62,6 +64,8 @@ class NotesViewerWidget(object):
                         background_color='#F5F5DC', # and also by color code.
                         border_color='red' 
         )
+
+        # add an edit panel.
 
         self.status_widget = widgets.Text()
 
@@ -187,8 +191,96 @@ class NotesViewerWidget(object):
         for w in [self.notebook_w, self.notes_widget, self.note_widget, self.status_widget]:
             w.close()
 
+class NoteEditWidget(FlexBox):
+    
+    note = Any(allow_none=True)
+    
+    def __init__(self, ewu, extras=None, **kwargs):
+        kwargs = {'orientation':'vertical'}
 
-class NoteEditWidget(object):
+        self.ewu = ewu
+        # start with no note
+
+        self.note = None
+        
+        # need to track content here because note might hold only a hash of the content
+        self.content = None
+
+        if extras is None:
+            self.extras =  {
+                'footnotes'          : None,
+                'cuddled-lists'      : None,
+                'metadata'           : None,
+                'markdown-in-html'   : None,
+                'fenced-code-blocks' : {'noclasses': True, 'cssclass': "", 'style': "default"}
+            }
+
+        self.title_w = widgets.Text()
+        self.body_w = widgets.Textarea()
+        self.save_button = widgets.Button(
+            description="Save"
+        )
+        self.new_button = widgets.Button(
+          description="New"
+        )
+
+        self.button_line = HBox([self.save_button, self.new_button])
+        children = (
+          self.title_w, 
+          self.body_w, 
+          self.button_line,)
+
+        super(NoteEditWidget, self).__init__(children, **kwargs)
+        
+        # wire up the event handlers
+
+        self.save_button.on_click(self.handle_save)
+        self.new_button.on_click(self.handle_new)
+        
+    def handle_new(self, b):
+        """
+        initialize  title and body
+        """
+
+        self.note = None
+        self.title_w.value = ''
+        self.body_w.value = ''  
+
+    def handle_save(self, b):
+
+        if self.note is None:
+            # create new note
+            if not self.title_w.value:
+                self.title_w.value = 'Untitled'
+            self.content = self.body_w.value
+            body = markdown2.markdown(self.content, extras=self.extras)
+            try:
+                # use default notebook for now -- have to figure out how to wire notebook selection in
+                self.note = self.ewu.create_note(self.title_w.value, body)
+            except Exception as e:
+                print(e)
+                
+        else:
+            # figure out new changes
+            # pass body if it has changed
+            if not self.title_w.value:
+                self.title_w.value = 'Untitled'
+            if self.body_w.value <> self.content:
+                try:
+                    self.content = self.body_w.value
+                    body = markdown2.markdown(self.content, extras=self.extras)
+                    self.note = ewu.update_note(self.note, title=self.title_w.value, 
+                                                content=body)
+                except Exception as e:
+                    print (e)
+                    
+            else:
+                try:
+                    self.note = ewu.update_note(self.note, title=self.title_w.value)
+                except Exception as e:
+                    print (e)
+                    
+class NoteEditWidget0(object):
     def __init__(self, ewu, extras=None):
         # start with no note
         self.ewu = ewu
