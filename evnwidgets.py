@@ -54,7 +54,7 @@ class NotesViewerWidget(object):
             description='Notebook:'
         )
 
-        # TO DO: mode widget: viewing vs editing  
+        # TO DO: add a mode widget: viewing vs editing  
 
         # set up empty notes_widget
         self.df = DataFrame()
@@ -66,6 +66,7 @@ class NotesViewerWidget(object):
         )
 
         # add an edit panel.
+        self.edit_panel = NoteEditWidget(self.ewu)
 
         self.status_widget = widgets.Text()
 
@@ -185,6 +186,7 @@ class NotesViewerWidget(object):
         display(VBox([self.notebook_widget, 
                 self.status_widget, 
                 self.notes_widget, 
+                self.edit_panel,
                 self.note_widget]))
 
     def __del__(self):
@@ -237,6 +239,14 @@ class NoteEditWidget(FlexBox):
         self.save_button.on_click(self.handle_save)
         self.new_button.on_click(self.handle_new)
         
+    def set_note(self, note):
+        """
+        pass in a evernote.edam.type.ttypes.Note
+        """
+        self.note = note
+        self.title_w.value = note.title.decode('utf-8')
+        self.body_w.value = html2text.html2text(note.content.decode('utf-8'))
+
     def handle_new(self, b):
         """
         initialize  title and body
