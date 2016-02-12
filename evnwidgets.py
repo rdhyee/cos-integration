@@ -152,9 +152,16 @@ class NotesViewerWidget(object):
         self.note_widget.value = "<i>Retrieving note...</i>"
         try:
             note = self.ewu.get_note(guid, withContent=True, withResourcesData=True)
+
+            # update note_widget
             mediaStore = OSFMediaStore(self.ewu.noteStore, guid)
             _html =  ENML2HTML.ENMLToHTML(note.content, media_store=mediaStore).decode('UTF-8')
             self.note_widget.value = _html
+
+            # update edit_panel
+            self.edit_panel.set_note(note)
+
+
         except Exception as e:
             # how to display message
             # self.note_widget.value = u"{} | {}: {}".format(value, e.errorCode, e.parameter)
